@@ -1,4 +1,4 @@
-// script.js (books.csv 한글 컬럼명: 도서명/저자/출판사/청구기호/등록번호)
+// script.js (books.csv 한글 컬럼명: 도서명/저자/출판사/출판년도/청구기호/등록번호)
 
 let BOOKS = []; // CSV에서 로드됨
 
@@ -8,14 +8,16 @@ const $btn = document.getElementById("searchBtn");
 const $tbody = document.getElementById("tbody");
 const $hint = document.getElementById("hint");
 
+// 띄어쓰기 무시 + 소문자
 function normalize(text) {
   return (text ?? "")
     .toString()
     .trim()
-    .replace(/\s+/g, "") // 띄어쓰기 무시
+    .replace(/\s+/g, "")
     .toLowerCase();
 }
 
+// XSS 방지(표시용)
 function escapeHtml(str) {
   return (str ?? "").toString().replace(/[&<>"']/g, (m) => ({
     "&": "&amp;",
@@ -41,7 +43,7 @@ function renderRows(rows) {
   `).join("");
 }
 
-// CSV 한 줄 파싱(따옴표 포함 대응)
+// 콤마 CSV용(따옴표 포함) 파서
 function splitCSVLine(line) {
   const out = [];
   let cur = "";
@@ -71,6 +73,7 @@ function splitCSVLine(line) {
   return out;
 }
 
+// ✅ 탭/세미콜론/콤마 자동 인식 + 한글 헤더 자동 매핑
 function parseCSV(text) {
   const cleaned = text.replace(/^\uFEFF/, "").replace(/\r/g, "");
   const lines = cleaned.split("\n").filter(l => l.trim() !== "");
@@ -78,27 +81,25 @@ function parseCSV(text) {
 
   const headerLine = lines[0];
 
-  // ✅ 구분자 자동 감지: 탭(\t) > 세미콜론(;) > 콤마(,)
+  // 구분자 자동 감지: 탭 > 세미콜론 > 콤마
   const delimiter =
     headerLine.includes("\t") ? "\t" :
     (headerLine.includes(";") && !headerLine.includes(",")) ? ";" :
     ",";
 
   const splitLine = (line) => {
-    if (delimiter === ",") return splitCSVLine(line); // 기존 따옴표 대응 함수 사용
-    // 탭/세미콜론은 일반 split로 충분한 경우가 대부분(엑셀 내보내기)
+    if (delimiter === ",") return splitCSVLine(line);
     return line.split(delimiter).map(v =>
       v.trim().replace(/^"|"$/g, "").replace(/""/g, '"')
     );
   };
 
   const headers = splitLine(headerLine).map(h => h.trim());
+  const normHeader = (h) => h.replace(/\s+/g, "");
 
   const pickIndex = (candidates) => {
     for (const name of candidates) {
-      const i = headers.findIndex(h =>
-        h.replace(/\s+/g, "") === name.replace(/\s+/g, "")
-      );
+      const i = headers.findIndex(h => normHeader(h) === normHeader(name));
       if (i >= 0) return i;
     }
     return -1;
@@ -108,7 +109,7 @@ function parseCSV(text) {
     title: pickIndex(["도서명", "서명", "제목", "도서제목", "도서 제목"]),
     author: pickIndex(["저자", "지은이", "저자명"]),
     publisher: pickIndex(["출판사", "발행처"]),
-    pubyear: pickIndex(["출판년도", "발행년도", "출판연도", "발행연도"]),
+    pubyear: pickIndex(["출판년도", "출판연도", "발행년도", "발행연도"]),
     callno: pickIndex(["청구기호", "청구번호", "청구 번호"]),
     regno: pickIndex(["등록번호", "등록 번호"])
   };
@@ -133,6 +134,27 @@ function parseCSV(text) {
   return rows;
 }
 
+// ✅ CSV 로드 (여기가 핵심!)
+async function loadBooks() {
+  try {
+    $hint.textContent = "장서 데이터를 불러오는 중입니다...";
+    renderMessage("장서 데이터를 불러오는 중입니다...");
+
+    const res = await fetch("./books.csv", { cache: "no-store" });
+    if (!res.ok) throw new Error(`books.csv를 불러오지 못했습니다. (HTTP ${res.status})`);
+
+    const text = await res.text();
+    BOOKS = parseCSV(text);
+
+    $hint.textContent = `준비 완료: ${BOOKS.length}권 · 도서명/저자/출판사/청구기호로 검색할 수 있습니다.`;
+    renderMessage("도서명 또는 저자를 입력한 후 [검색] 버튼을 눌러주세요.");
+  } catch (err) {
+    console.error(err);
+    $hint.textContent = "오류: 장서 데이터를 불러오지 못했습니다.";
+    renderMessage(`오류: ${err.message}`);
+  }
+}
+
 function doSearch() {
   const qRaw = $q.value.trim();
   const nq = normalize(qRaw);
@@ -146,17 +168,17 @@ function doSearch() {
   const target = $target.value;
 
   const results = BOOKS.filter(b => {
-    // 화면 드롭다운 값(title/author/publisher/callno/all)과 매핑
     const fields = {
       title: normalize(b.title),
       author: normalize(b.author),
       publisher: normalize(b.publisher),
       callno: normalize(b.callno),
       regno: normalize(b.regno),
+      pubyear: normalize(b.pubyear),
     };
 
     if (target === "all") {
-      // 통합검색에 등록번호까지 포함
+      // 통합검색: 등록번호/출판년도도 포함
       return Object.values(fields).some(v => v.includes(nq));
     }
     return (fields[target] || "").includes(nq);
@@ -178,4 +200,3 @@ $q.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
 // 시작: CSV 로드
 loadBooks();
-
