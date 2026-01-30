@@ -72,61 +72,65 @@ function splitCSVLine(line) {
 }
 
 function parseCSV(text) {
-  // BOM 제거 + \r 제거
   const cleaned = text.replace(/^\uFEFF/, "").replace(/\r/g, "");
   const lines = cleaned.split("\n").filter(l => l.trim() !== "");
   if (lines.length < 2) return [];
 
-  const headers = splitCSVLine(lines[0]).map(h => h.trim());
+  const headerLine = lines[0];
 
-  // ✅ 한글 헤더 위치 찾기
-  const idx = {
-    title: headers.indexOf("도서명"),
-    author: headers.indexOf("저자"),
-    publisher: headers.indexOf("출판사"),
-    callno: headers.indexOf("청구기호"),
-    regno: headers.indexOf("등록번호"),
+  // ✅ 구분자 자동 감지: 탭(\t) > 세미콜론(;) > 콤마(,)
+  const delimiter =
+    headerLine.includes("\t") ? "\t" :
+    (headerLine.includes(";") && !headerLine.includes(",")) ? ";" :
+    ",";
+
+  const splitLine = (line) => {
+    if (delimiter === ",") return splitCSVLine(line); // 기존 따옴표 대응 함수 사용
+    // 탭/세미콜론은 일반 split로 충분한 경우가 대부분(엑셀 내보내기)
+    return line.split(delimiter).map(v =>
+      v.trim().replace(/^"|"$/g, "").replace(/""/g, '"')
+    );
   };
 
-  // 필수 컬럼 검사
-  if (idx.title === -1) throw new Error("CSV 첫 줄(헤더)에 '도서명' 컬럼이 없습니다.");
+  const headers = splitLine(headerLine).map(h => h.trim());
+
+  const pickIndex = (candidates) => {
+    for (const name of candidates) {
+      const i = headers.findIndex(h =>
+        h.replace(/\s+/g, "") === name.replace(/\s+/g, "")
+      );
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+
+  const idx = {
+    title: pickIndex(["도서명", "서명", "제목", "도서제목", "도서 제목"]),
+    author: pickIndex(["저자", "지은이", "저자명"]),
+    publisher: pickIndex(["출판사", "발행처"]),
+    pubyear: pickIndex(["출판년도", "발행년도", "출판연도", "발행연도"]),
+    callno: pickIndex(["청구기호", "청구번호", "청구 번호"]),
+    regno: pickIndex(["등록번호", "등록 번호"])
+  };
+
+  if (idx.title === -1) throw new Error("CSV 첫 줄(헤더)에 '도서명/서명/제목' 컬럼이 없습니다.");
   if (idx.author === -1) throw new Error("CSV 첫 줄(헤더)에 '저자' 컬럼이 없습니다.");
   if (idx.publisher === -1) throw new Error("CSV 첫 줄(헤더)에 '출판사' 컬럼이 없습니다.");
   if (idx.callno === -1) throw new Error("CSV 첫 줄(헤더)에 '청구기호' 컬럼이 없습니다.");
 
   const rows = [];
   for (let i = 1; i < lines.length; i++) {
-    const cols = splitCSVLine(lines[i]);
-
+    const cols = splitLine(lines[i]);
     rows.push({
       title: cols[idx.title] ?? "",
       author: cols[idx.author] ?? "",
       publisher: cols[idx.publisher] ?? "",
       callno: cols[idx.callno] ?? "",
       regno: idx.regno >= 0 ? (cols[idx.regno] ?? "") : "",
+      pubyear: idx.pubyear >= 0 ? (cols[idx.pubyear] ?? "") : ""
     });
   }
   return rows;
-}
-
-async function loadBooks() {
-  try {
-    $hint.textContent = "장서 데이터를 불러오는 중입니다...";
-    renderMessage("장서 데이터를 불러오는 중입니다...");
-
-    const res = await fetch("./books.csv", { cache: "no-store" });
-    if (!res.ok) throw new Error(`books.csv를 불러오지 못했습니다. (HTTP ${res.status})`);
-
-    const text = await res.text();
-    BOOKS = parseCSV(text);
-
-    $hint.textContent = `준비 완료: ${BOOKS.length}권 · 도서명/저자/출판사/청구기호로 검색할 수 있습니다.`;
-    renderMessage("도서명 또는 저자를 입력한 후 [검색] 버튼을 눌러주세요.");
-  } catch (err) {
-    console.error(err);
-    $hint.textContent = "오류: 장서 데이터를 불러오지 못했습니다.";
-    renderMessage(`오류: ${err.message}`);
-  }
 }
 
 function doSearch() {
@@ -174,3 +178,4 @@ $q.addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
 // 시작: CSV 로드
 loadBooks();
+
